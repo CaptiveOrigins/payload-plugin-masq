@@ -1,14 +1,19 @@
-import { APIError, type CollectionBeforeOperationHook, type Config, type Plugin } from 'payload'
+import { APIError, type CollectionBeforeOperationHook, type Config, type GlobalBeforeChangeHook, type Plugin } from 'payload'
 
 import { searchEndpoint, startEndpoint, stopEndpoint } from './endpoints.js'
 import { masqStateOf } from './state.js'
 import type { MasqPluginOptions, ResolvedMasqOptions } from './types.js'
 
-/** Read-only masquerade: refuse writes while masquerading (the stop endpoint writes below hooks). */
+/** Payload's own bookkeeping, written while simply looking around the admin. */
+const BOOKKEEPING = new Set(['payload-preferences', 'payload-locked-documents'])
+
+export const READ_ONLY_MESSAGE = 'Masquerade is read-only: nothing can be created, changed or deleted while masquerading.'
+
+/** Read-only masquerade: refuse writes while masquerading (the plugin's own writes are marked internal). */
 const readOnlyGuard: CollectionBeforeOperationHook = ({ args, operation, req }) => {
   if (req.context?.masqInternal) return args
   if ((operation === 'create' || operation === 'update' || operation === 'delete') && masqStateOf(req.payload, req.headers))
-    throw new APIError('Masquerade is read-only: changes are turned off.', 403, undefined, true)
+    throw new APIError(READ_ONLY_MESSAGE, 403, undefined, true)
   return args
 }
 
@@ -38,7 +43,7 @@ export const masqPlugin =
       collection,
       canMasquerade: options.canMasquerade,
       duration: options.duration ?? 3600,
-      readOnly: options.readOnly ?? false,
+      readOnly: options.readOnly ?? true,
       requireReason: options.requireReason ?? false,
       labelField: options.labelField ?? 'email',
       searchFields: options.searchFields ?? ['email'],
@@ -54,23 +59,40 @@ export const masqPlugin =
     }
     if (!(config.collections ?? []).some((c) => c.slug === collection)) throw new Error(`payload-plugin-masq: no collection "${collection}"`)
     const components = config.admin?.components ?? {}
+    const globals = resolved.readOnly
+      ? (config.globals ?? []).map((g) => ({
+          ...g,
+          hooks: {
+            ...g.hooks,
+            beforeChange: [
+              ...(g.hooks?.beforeChange ?? []),
+              (({ data, req }) => {
+                if (!req.context?.masqInternal && masqStateOf(req.payload, req.headers)) throw new APIError(READ_ONLY_MESSAGE, 403, undefined, true)
+                return data
+              }) as GlobalBeforeChangeHook,
+            ],
+          },
+        }))
+      : config.globals
     return {
       ...config,
+      globals,
       custom: { ...config.custom, masq: resolved },
       admin: {
         ...config.admin,
         components: {
           ...components,
-          header: [...(components.header ?? []), ...(resolved.adminBanner ? ['payload-plugin-masq/rsc#AdminMasqueradeBanner'] : [])],
-          afterNavLinks: [...(components.afterNavLinks ?? []), ...(resolved.adminView ? ['payload-plugin-masq/rsc#MasqueradeNavLink'] : [])],
+          header: [...(components.header ?? []), ...(resolved.adminBanner ? ['@captiveorigins/payload-plugin-masq/rsc#AdminMasqueradeBanner'] : [])],
+          afterNavLinks: [...(components.afterNavLinks ?? []), ...(resolved.adminView ? ['@captiveorigins/payload-plugin-masq/rsc#MasqueradeNavLink'] : [])],
           views: {
             ...components.views,
-            ...(resolved.adminView ? { masquerade: { Component: 'payload-plugin-masq/rsc#MasqueradeView', path: '/masquerade' } } : {}),
+            ...(resolved.adminView ? { masquerade: { Component: '@captiveorigins/payload-plugin-masq/rsc#MasqueradeView', path: '/masquerade' } } : {}),
           },
         },
       },
       collections: (config.collections ?? []).map((c) => {
-        const hooks = resolved.readOnly ? { ...c.hooks, beforeOperation: [...(c.hooks?.beforeOperation ?? []), readOnlyGuard] } : c.hooks
+        const guarded = resolved.readOnly && !BOOKKEEPING.has(c.slug)
+        const hooks = guarded ? { ...c.hooks, beforeOperation: [...(c.hooks?.beforeOperation ?? []), readOnlyGuard] } : c.hooks
         if (c.slug !== collection) return { ...c, hooks }
         const columns = c.admin?.defaultColumns
         return {
@@ -85,7 +107,7 @@ export const masqPlugin =
               label: 'Masquerade',
               admin: {
                 position: 'sidebar',
-                components: { Field: 'payload-plugin-masq/rsc#MasqueradeField', Cell: 'payload-plugin-masq/rsc#MasqueradeCell' },
+                components: { Field: '@captiveorigins/payload-plugin-masq/rsc#MasqueradeField', Cell: '@captiveorigins/payload-plugin-masq/rsc#MasqueradeCell' },
               },
             },
             ...c.fields,

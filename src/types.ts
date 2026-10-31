@@ -33,7 +33,12 @@ export type MasqPluginOptions = {
   canMasquerade: (args: MasqPermissionArgs) => boolean | Promise<boolean>
   /** Length of the borrowed session in seconds. Default 3600 (one hour). */
   duration?: number
-  /** Refuse create, update and delete while masquerading (look, don't touch). Default false. */
+  /**
+   * Look, don't touch: refuse create, update and delete while masquerading, everywhere
+   * Payload runs (REST, GraphQL, admin, Local API with the request). Payload's own
+   * bookkeeping (preferences, document locks) still works so the admin behaves normally.
+   * Default true. For your own server actions, call `assertNotMasquerading(payload, headers)`.
+   */
   readOnly?: boolean
   /** Ask for a reason before starting; it is passed to `onStart`. Default false. */
   requireReason?: boolean

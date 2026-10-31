@@ -54,3 +54,12 @@ export function cookie(payload: Payload, slug: string, name: string, value: stri
     returnCookieAsObject: false,
   })
 }
+
+/**
+ * For your own server actions and route handlers that write through the Local
+ * API without the request: refuse while masquerading (read-only masquerade).
+ */
+export function assertNotMasquerading(payload: Payload, headers: Headers | null | undefined) {
+  if ((payload.config.custom?.masq as ResolvedMasqOptions | undefined)?.readOnly !== false && masqStateOf(payload, headers))
+    throw new Error('Masquerade is read-only: nothing can be created, changed or deleted while masquerading.')
+}

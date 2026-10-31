@@ -8,7 +8,7 @@ const base = { collections: [{ slug: 'users', auth: true, fields: [] }, { slug: 
 
 describe('options', () => {
   it('refuses writes while masquerading in read-only mode, except its own', async () => {
-    const config = masqPlugin({ canMasquerade: () => true, readOnly: true })(base) as Config
+    const config = masqPlugin({ canMasquerade: () => true })(base) as Config // read-only by default
     const hook = config.collections!.find((c) => c.slug === 'notes')!.hooks!.beforeOperation!.at(-1) as CollectionBeforeOperationHook
     const secret = 's'
     const state = encodeState(secret, { by: 'a', as: 'b', at: new Date().toISOString(), until: new Date().toISOString() })
@@ -17,6 +17,14 @@ describe('options', () => {
     expect(hook({ args: { ok: 1 }, operation: 'read', req: req(`payload-masq=${state}`) } as never)).toEqual({ ok: 1 })
     expect(hook({ args: { ok: 1 }, operation: 'update', req: req('') } as never)).toEqual({ ok: 1 })
     expect(hook({ args: { ok: 1 }, operation: 'update', req: req(`payload-masq=${state}`, { masqInternal: true }) } as never)).toEqual({ ok: 1 })
+  })
+
+  it('leaves Payload bookkeeping writable and can be turned off', () => {
+    const withPrefs = { ...base, collections: [...base.collections!, { slug: 'payload-preferences', fields: [] }] } as Config
+    const on = masqPlugin({ canMasquerade: () => true })(withPrefs) as Config
+    expect(on.collections!.find((c) => c.slug === 'payload-preferences')!.hooks?.beforeOperation ?? []).toHaveLength(0)
+    const off = masqPlugin({ canMasquerade: () => true, readOnly: false })(base) as Config
+    expect(off.collections!.find((c) => c.slug === 'notes')!.hooks?.beforeOperation ?? []).toHaveLength(0)
   })
 
   it('adds nothing when disabled, and refuses a missing collection', () => {

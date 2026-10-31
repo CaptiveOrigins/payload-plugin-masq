@@ -30,7 +30,8 @@ export async function MasqueradeView({ initPageResult, params, searchParams }: A
         {allowed ? (
           <>
             <p style={{ maxWidth: 680, marginBottom: 'calc(var(--base) * 1.5)' }}>
-              Sign in as someone to see the site and admin exactly as they do, for {Math.round(opts.duration / 60)} minutes. Find them below, or open their
+              Sign in as someone to see the site and admin exactly as they do, for {Math.round(opts.duration / 60)} minutes
+              {opts.readOnly ? ', read-only: you can look everywhere they can, but not create, change or delete anything' : ''}. Find them below, or open their
               account and use “Masquerade as this user”. A banner takes you back to your own account.
             </p>
             <QuickMasquerade apiPath={`${opts.apiRoute}/${opts.collection}`} requireReason={opts.requireReason} />

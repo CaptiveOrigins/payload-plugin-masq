@@ -17,7 +17,7 @@ export async function MasqueradeField({ payload, req, id, data }: { payload: Pay
       apiPath={`${opts.apiRoute}/${opts.collection}`}
       userId={String(id)}
       requireReason={opts.requireReason}
-      hint={`See the site and admin as they do, for ${Math.round(opts.duration / 60)} minutes. A banner takes you back.`}
+      hint={`See the site and admin as they do, for ${Math.round(opts.duration / 60)} minutes${opts.readOnly ? ', read-only' : ''}. A banner takes you back.`}
     />
   )
 }

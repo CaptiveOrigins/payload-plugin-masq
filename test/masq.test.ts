@@ -3,7 +3,7 @@ import { MongoMemoryReplSet } from 'mongodb-memory-server'
 import { buildConfig, createLocalReq, getPayload, type Endpoint, type Payload, type PayloadRequest } from 'payload'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
-import { decodeState, masqPlugin, masqueraderOf, STATE_COOKIE, type MasqStartArgs, type MasqStopArgs } from '../src/index.js'
+import { assertNotMasquerading, decodeState, masqPlugin, masqueraderOf, STATE_COOKIE, type MasqStartArgs, type MasqStopArgs } from '../src/index.js'
 
 type U = { id: string; email: string; role: string }
 let payload: Payload
@@ -55,7 +55,6 @@ beforeAll(async () => {
         masqPlugin({
           // Admins may masquerade as anyone, including other admins.
           canMasquerade: ({ user }) => user.role === 'admin',
-          readOnly: false,
           searchFields: ['email', 'name'],
           labelField: 'name',
           onStart: (a) => void started.push(a),
@@ -81,7 +80,7 @@ describe('masquerade', () => {
     const paths = (payload.collections.users!.config.endpoints as Endpoint[]).map((e) => e.path)
     expect(paths).toEqual(expect.arrayContaining(['/:id/masq', '/masq/stop', '/masq/search']))
     expect(payload.config.admin.components.views?.masquerade).toMatchObject({ path: '/masquerade' })
-    expect(payload.config.admin.components.header).toContain('payload-plugin-masq/rsc#AdminMasqueradeBanner')
+    expect(payload.config.admin.components.header).toContain('@captiveorigins/payload-plugin-masq/rsc#AdminMasqueradeBanner')
     expect(payload.collections.users!.config.fields.some((f) => 'name' in f && f.name === 'masq')).toBe(true)
     expect(payload.collections.users!.config.admin.defaultColumns).toEqual(['email', 'masq'])
   })
@@ -110,6 +109,19 @@ describe('masquerade', () => {
     expect(stopped.at(-1)).toMatchObject({ masqueraderId: admin.id, targetId: member.id, expired: false, restored: true })
     // The borrowed session is ended.
     expect((await payload.auth({ headers: new Headers({ Authorization: `JWT ${c['payload-token']}` }) })).user).toBeNull()
+  })
+
+  it('is read-only while masquerading, through the request', async () => {
+    const c = jar(await call('/:id/masq', { 'payload-token': await login(admin) }, { id: member.id }))
+    const headers = new Headers({ cookie: `payload-token=${c['payload-token']}; ${STATE_COOKIE}=${c[STATE_COOKIE]}` })
+    const { user } = await payload.auth({ headers })
+    const req = (await createLocalReq({ user: user as never }, payload)) as PayloadRequest
+    ;(req as { headers: Headers }).headers = headers
+    await expect(payload.create({ collection: 'notes', data: { text: 'x' }, req, overrideAccess: false })).rejects.toThrow(/read-only/)
+    await expect(payload.update({ collection: 'users', id: member.id, data: { name: 'Changed' }, req, overrideAccess: false })).rejects.toThrow(/read-only/)
+    expect((await payload.find({ collection: 'notes', req, overrideAccess: false })).docs).toEqual([])
+    expect(() => assertNotMasquerading(payload, headers)).toThrow(/read-only/)
+    expect(() => assertNotMasquerading(payload, new Headers())).not.toThrow()
   })
 
   it('lets admins masquerade as other admins', async () => {

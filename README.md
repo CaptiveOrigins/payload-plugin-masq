@@ -24,18 +24,20 @@ Built for support and troubleshooting.
   borrowed session is ended when you return.
 - **Audit hooks**: `onStart` (with an optional reason) and `onStop`, and `masqueraderOf(req)`
   so your audit trail can record who really made a change.
-- **Read-only mode** (optional): look, don't touch.
+- **Read-only** (default): look everywhere the user can, but nothing can be created, changed
+  or deleted while masquerading. Payload's own bookkeeping (preferences, document locks) keeps
+  working. Writes in your own server actions: call `assertNotMasquerading(payload, headers)`.
 - Never as yourself, no nesting, no public endpoints: masquerading needs a signed-in user the
   rules allow.
 
 ## Install
 
 ```bash
-npm install payload-plugin-masq
+npm install @captiveorigins/payload-plugin-masq
 ```
 
 ```ts
-import { masqPlugin } from 'payload-plugin-masq'
+import { masqPlugin } from '@captiveorigins/payload-plugin-masq'
 
 export default buildConfig({
   plugins: [
@@ -61,7 +63,7 @@ Then run `payload generate:importmap`. Add the banner to your site layout (a Ser
 Component) so masqueraders see it outside the admin too:
 
 ```tsx
-import { MasqueradeBanner } from 'payload-plugin-masq/rsc'
+import { MasqueradeBanner } from '@captiveorigins/payload-plugin-masq/rsc'
 
 <MasqueradeBanner payload={payload} />
 ```
@@ -73,7 +75,7 @@ import { MasqueradeBanner } from 'payload-plugin-masq/rsc'
 | `canMasquerade` | (required) | `({ payload, user, target? }) => boolean`. No default: nobody can masquerade until you decide. |
 | `collection` | `'users'` | Auth collection. |
 | `duration` | `3600` | Seconds the borrowed session lasts. |
-| `readOnly` | `false` | Refuse create, update and delete while masquerading. |
+| `readOnly` | `true` | Refuse create, update and delete while masquerading. |
 | `requireReason` | `false` | Ask for a reason; passed to `onStart`. |
 | `labelField` | `'email'` | Name shown in the search and banner. |
 | `searchFields` | `['email']` | Fields the search matches. |

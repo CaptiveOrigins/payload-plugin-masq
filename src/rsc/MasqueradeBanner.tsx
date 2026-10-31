@@ -44,7 +44,8 @@ export async function MasqueradeBanner({ payload, className }: { payload: Payloa
     >
       <span>
         You’re masquerading as <strong>{name}</strong>
-        {email}. {minutes > 0 ? `Ends in ${minutes} min.` : 'The session has ended.'}
+        {email}
+        {opts.readOnly ? ', read-only' : ''}. {minutes > 0 ? `Ends in ${minutes} min.` : 'The session has ended.'}
       </span>
       <ReturnButton stopPath={`${opts.apiRoute}/${opts.collection}/masq/stop`} />
     </div>
