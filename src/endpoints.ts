@@ -1,7 +1,7 @@
 import { addDataAndFileToRequest, APIError, getFieldsToSign, jwtSign, type Endpoint, type PayloadRequest, type Where } from 'payload'
 import { addSessionToUser, parseCookies } from 'payload/shared'
 
-import { BORROWED_CLAIM, borrowedBy, cookie, encodeState, isMasquerading, masqOptions, masqStateOf, RETURN_COOKIE, STATE_COOKIE } from './state.js'
+import { BORROWED_CLAIM, borrowedClaim, cookie, encodeState, isMasquerading, masqOptions, masqStateOf, RETURN_COOKIE, STATE_COOKIE } from './state.js'
 import { mayMasquerade } from './access.js'
 import type { MasqUser } from './types.js'
 
@@ -85,8 +85,10 @@ export const stopEndpoint: Endpoint = {
 
     // End the borrowed session if it is still alive: named by the state cookie, or, if that
     // cookie is gone, by the borrowed token's own claim.
-    const claimedBy = borrowedBy(req.payload, req.headers)
     const borrowed = req.user as (MasqUser & { _sid?: string; collection?: string }) | null
+    // Only a genuine claim, on the token that signs in the very user this request is authenticated as.
+    const claim = borrowedClaim(req.payload, req.headers)
+    const claimedBy = claim && borrowed && claim.id === String(borrowed.id) ? claim.by : null
     const live = Boolean(borrowed?.collection === opts.collection && (state ? String(borrowed.id) === state.as : claimedBy))
     if (live && borrowed?._sid) {
       const doc = (await req.payload.findByID({ collection: opts.collection as never, id: borrowed.id, depth: 0, overrideAccess: true, showHiddenFields: true, req })) as {

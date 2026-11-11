@@ -2,6 +2,17 @@
 
 Kept by this repo's owning session, per `~/Code/CLAUDE.md`, "Test self-audits". Newest first.
 
+## 2026-11-11 (re-read): the masqBy claim must be genuine
+
+The re-read approved 1b4cf61 with one should: the stop endpoint read `masqBy` without checking its signature, so a plain user who sent their real token in `Authorization` and a cookie copy with a forged claim got a false `onStop` entry and lost their own session. The claim now counts only on a token signed with Payload's secret (HS256, as Payload checks its JWTs), and stop uses it only when the token signs in the user the request is authenticated as. Suite: 47 → 49.
+
+| Promise | Test |
+| --- | --- |
+| A forged claim records nothing and ends nothing | `the masqBy claim must be genuine > a forged claim…` |
+| A genuine borrowed token of someone else, beside a real sign-in, records nothing and ends nothing | `…a genuine borrowed token of someone else…` |
+
+Mutation checks: signature not checked, 1 failure; claim not matched to the signed-in user, 1 (it survived until the second test was added). README notes added: a leftover masquerade cookie (up to 24 hours) makes forgot-password answer 403 until Return or expiry; the upgrade command signs everyone out; `/api/payload-jobs/run` isn't blocked.
+
 ## 2026-11-11 (later): security review of 6ba0366
 
 The security review didn't approve 6ba0366. Each item below has a REST test (`handleEndpoints`) written first. Suite: 37 → 47.

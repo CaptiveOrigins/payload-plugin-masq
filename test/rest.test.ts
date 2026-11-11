@@ -5,7 +5,7 @@ import { buildConfig, getFieldsToSign, getPayload, handleEndpoints, jwtSign, typ
 import { addSessionToUser } from 'payload/shared'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
-import { masqPlugin, STATE_COOKIE } from '../src/index.js'
+import { masqPlugin, STATE_COOKIE, type MasqStopArgs } from '../src/index.js'
 import { READ_ONLY_MESSAGE } from '../src/plugin.js'
 
 // Read-only masquerade through real HTTP requests: Payload's own REST router
@@ -18,6 +18,7 @@ let payload: Payload
 let mongo: MongoMemoryReplSet
 let admin: U
 let admin2: U
+const stops: MasqStopArgs[] = []
 let member: U
 let noteId: string
 
@@ -76,7 +77,7 @@ beforeAll(async () => {
       { slug: 'notes', versions: true, access: { create: () => true, read: () => true, readVersions: () => true, update: () => true, delete: () => true }, fields: [{ name: 'text', type: 'text' }] },
     ],
     globals: [{ slug: 'settings', versions: true, access: { read: () => true, readVersions: () => true, update: () => true }, fields: [{ name: 'motto', type: 'text' }] }],
-    plugins: [masqPlugin({ canMasquerade: ({ user }) => user.role === 'admin' })],
+    plugins: [masqPlugin({ canMasquerade: ({ user }) => user.role === 'admin', onStop: (a) => void stops.push(a) })],
   })
   payload = await getPayload({ config })
   const make = (email: string, role: string, name: string) =>
@@ -354,5 +355,37 @@ describe('canMasquerade must answer exactly true', () => {
     const body = (await withRule(rule, async () => (await rest('GET', '/users/masq/search', await signIn(admin))).json())) as { docs: { id: string; allowed: boolean }[] }
     expect(body.docs.find((d) => d.id === member.id)?.allowed).toBe(false)
     expect(body.docs.find((d) => d.id === admin2.id)?.allowed).toBe(true)
+  })
+})
+
+describe('the masqBy claim must be genuine', () => {
+  it('a forged claim on a cookie token records nothing and ends nothing', async () => {
+    const real = (await signIn(member))['payload-token']!
+    const [head, body, sig] = real.split('.')
+    const claims = { ...JSON.parse(Buffer.from(body!, 'base64url').toString('utf8')), masqBy: admin.id }
+    const forged = `${head}.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.${sig}`
+    const before = stops.length
+    const request = new Request('http://localhost:3000/api/users/masq/stop', {
+      method: 'POST',
+      headers: { Authorization: `JWT ${real}`, cookie: `payload-token=${forged}` },
+    })
+    const res = await handleEndpoints({ config, request })
+    expect(await res.json()).toMatchObject({ restored: false })
+    expect(stops.length).toBe(before)
+    // The real session is still alive.
+    expect((await payload.auth({ headers: new Headers({ Authorization: `JWT ${real}` }) })).user?.id).toBe(member.id)
+  })
+
+  it('a genuine borrowed token of someone else, beside a real sign-in, records nothing and ends nothing', async () => {
+    const real = (await signIn(member))['payload-token']!
+    const otherBorrowed = (await masquerade(admin2))['payload-token']!
+    const before = stops.length
+    const request = new Request('http://localhost:3000/api/users/masq/stop', {
+      method: 'POST',
+      headers: { Authorization: `JWT ${real}`, cookie: `payload-token=${otherBorrowed}` },
+    })
+    expect(await (await handleEndpoints({ config, request })).json()).toMatchObject({ restored: false })
+    expect(stops.length).toBe(before)
+    expect((await payload.auth({ headers: new Headers({ Authorization: `JWT ${real}` }) })).user?.id).toBe(member.id)
   })
 })

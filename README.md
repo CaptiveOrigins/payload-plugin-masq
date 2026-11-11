@@ -35,7 +35,13 @@ Built for support and troubleshooting.
   reads, Payload's own bookkeeping (preferences, document locks), signing in, signing out, and
   the plugin's own return. Not covered: your own endpoints and server actions (call
   `assertNotMasquerading(payload, headers)` there), Local API calls made without the request,
-  and email verification links, which Payload runs without hooks.
+  and email verification links, which Payload runs without hooks. If your site lets signed-in
+  users call `/api/payload-jobs/run`, a masquerader can start jobs that are already queued;
+  Masq doesn't block that.
+- **A leftover masquerade cookie** lasts up to 24 hours if you never press **Return to my
+  account** (for example, the borrowed hour ran out). Until it's cleared, that browser is
+  treated as masquerading, so forgot-password and other writes answer 403. Press **Return to my
+  account** in the banner to clear it, or wait for the cookie to expire.
 - **`canMasquerade` must answer exactly `true`.** A truthy value, or an error it throws, is a
   no: the endpoints answer 403 and the components show nothing.
 - Never as yourself, no nesting, no public endpoints: masquerading needs a signed-in user the
@@ -47,16 +53,17 @@ Required, once: before or right after upgrading, end every running masquerade. B
 sessions started by 0.1.0 carry no mark, so with the masquerade cookie cleared they can still
 write, and Payload keeps refreshing them. There is no sound way to tell them apart from normal
 sessions afterwards. A borrowed session is stored on the **target's** account, so signing the
-masquerader out isn't enough: clear the sessions of the users who were masqueraded as, or of
-everyone, which signs everyone out once.
+masquerader out isn't enough. The commands below clear **everyone's** sessions, so every user
+is signed out once and signs in again. (Clearing only the masqueraded users' sessions would be
+enough, but no command for that is given here because none has been tested.)
 
-With the Local API (any database adapter), for the default `users` collection:
+With the Local API (any database adapter; tested), for the default `users` collection:
 
 ```ts
 await payload.db.updateMany({ collection: 'users', where: {}, data: { sessions: [] } })
 ```
 
-Or on MongoDB from the command line:
+Or on MongoDB from the command line (the same change, not tested here):
 
 ```sh
 mongosh "$DATABASE_URI" --eval 'db.users.updateMany({}, { $set: { sessions: [] } })'

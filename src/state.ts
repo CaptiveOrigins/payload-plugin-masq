@@ -39,27 +39,35 @@ export const masqStateOf = (payload: Payload, headers: Headers | null | undefine
 export const BORROWED_CLAIM = 'masqBy'
 
 /**
- * The masquerader's id if the request's Payload token (cookie or Authorization
- * header) is a borrowed masquerade session. The token is only decoded, not
- * verified: a forged claim can only make its own request read-only, and
- * Payload verifies the token itself before it signs anyone in.
+ * The claim of a borrowed masquerade session in the request's Payload token (cookie or
+ * Authorization header): the masquerader (`by`) and the account the token signs in as
+ * (`id`). Only a token signed with Payload's secret counts, checked the way Payload checks
+ * its own JWTs (HS256), so a forged claim is ignored.
  */
-export function borrowedBy(payload: Payload, headers: Headers | null | undefined): string | null {
-  if (!headers) return null
+export function borrowedClaim(payload: Payload, headers: Headers | null | undefined): { by: string; id: string } | null {
+  if (!headers || !payload.secret) return null
   const auth = headers.get('Authorization') ?? ''
   const tokens = [parseCookies(headers).get(`${payload.config?.cookiePrefix ?? 'payload'}-token`), auth.replace(/^(JWT|Bearer) /, '')]
   for (const token of tokens) {
-    const body = token?.split('.')[1]
-    if (!body) continue
+    const [head, body, sig] = token?.split('.') ?? []
+    if (!head || !body || !sig) continue
+    const expected = Buffer.from(crypto.createHmac('sha256', payload.secret).update(`${head}.${body}`).digest('base64url'))
+    const given = Buffer.from(sig)
+    if (expected.length !== given.length || !crypto.timingSafeEqual(expected, given)) continue
     try {
-      const by = (JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as Record<string, unknown>)[BORROWED_CLAIM]
-      if (typeof by === 'string' && by) return by
+      if ((JSON.parse(Buffer.from(head, 'base64url').toString('utf8')) as { alg?: string }).alg !== 'HS256') continue
+      const claims = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as Record<string, unknown>
+      const by = claims[BORROWED_CLAIM]
+      if (typeof by === 'string' && by) return { by, id: String(claims.id ?? '') }
     } catch {
       // Not a JWT we can read: not a borrowed session.
     }
   }
   return null
 }
+
+/** The masquerader's id if the request carries a genuine borrowed session's token. */
+export const borrowedBy = (payload: Payload, headers: Headers | null | undefined) => borrowedClaim(payload, headers)?.by ?? null
 
 /**
  * Whether the request is masquerading: it carries the signed state cookie, or a
