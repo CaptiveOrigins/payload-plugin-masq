@@ -26,12 +26,44 @@ Built for support and troubleshooting.
   borrowed session is ended when you return.
 - **Audit hooks**: `onStart` (with an optional reason) and `onStop`, and `masqueraderOf(req)`
   so your audit trail can record who really made a change.
-- **Read-only** (default): look everywhere the user can, but nothing can be created, changed
-  or deleted while masquerading, over REST, GraphQL or the Local API with the request. The
-  borrowed token itself is marked, so clearing the masquerade cookie doesn't lift it. Payload's own bookkeeping (preferences, document locks) keeps
-  working. Writes in your own server actions: call `assertNotMasquerading(payload, headers)`.
+- **Read-only** (default): look everywhere the user can, but change nothing. While
+  masquerading, Payload refuses (403) on every collection: create, update, delete (single and
+  bulk), restoring a version, unlock, forgot-password and reset-password; and on every global:
+  update and restoring a version. That holds over REST, GraphQL and the Local API when you pass
+  the request. The borrowed token itself is marked, so clearing the masquerade cookie doesn't
+  lift it, whether the token comes in the cookie or an `Authorization` header. Still allowed:
+  reads, Payload's own bookkeeping (preferences, document locks), signing in, signing out, and
+  the plugin's own return. Not covered: your own endpoints and server actions (call
+  `assertNotMasquerading(payload, headers)` there), Local API calls made without the request,
+  and email verification links, which Payload runs without hooks.
+- **`canMasquerade` must answer exactly `true`.** A truthy value, or an error it throws, is a
+  no: the endpoints answer 403 and the components show nothing.
 - Never as yourself, no nesting, no public endpoints: masquerading needs a signed-in user the
   rules allow.
+
+## Upgrading from 0.1.0
+
+Required, once: before or right after upgrading, end every running masquerade. Borrowed
+sessions started by 0.1.0 carry no mark, so with the masquerade cookie cleared they can still
+write, and Payload keeps refreshing them. There is no sound way to tell them apart from normal
+sessions afterwards. A borrowed session is stored on the **target's** account, so signing the
+masquerader out isn't enough: clear the sessions of the users who were masqueraded as, or of
+everyone, which signs everyone out once.
+
+With the Local API (any database adapter), for the default `users` collection:
+
+```ts
+await payload.db.updateMany({ collection: 'users', where: {}, data: { sessions: [] } })
+```
+
+Or on MongoDB from the command line:
+
+```sh
+mongosh "$DATABASE_URI" --eval 'db.users.updateMany({}, { $set: { sessions: [] } })'
+```
+
+If your auth collection sets `useSessions: false`, there are no sessions to clear; changing
+`PAYLOAD_SECRET` is then the only way to end those tokens, and it signs everyone out.
 
 ## On its own, and with others
 

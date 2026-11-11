@@ -3,6 +3,7 @@ import { headers } from 'next/headers.js'
 import type { AdminViewServerProps } from 'payload'
 import React from 'react'
 
+import { mayMasquerade } from '../access.js'
 import { MasqueradeSearch, QuickMasquerade } from '../client/MasqueradeSearch.js'
 import { isMasquerading, masqOptions } from '../state.js'
 import type { MasqUser } from '../types.js'
@@ -15,7 +16,7 @@ export async function MasqueradeView({ initPageResult, params, searchParams }: A
   const user = req.user as unknown as MasqUser | null
   // Not while masquerading: there is no nesting.
   const nested = isMasquerading(payload, req.headers)
-  const allowed = Boolean(user && !nested && (await opts.canMasquerade({ payload, user })))
+  const allowed = Boolean(user && !nested && (await mayMasquerade(opts, { payload, user })))
   return (
     <DefaultTemplate
       i18n={req.i18n}
@@ -52,7 +53,7 @@ export async function MasqueradeView({ initPageResult, params, searchParams }: A
 /** Nav link to the Masquerade area, only for people allowed to masquerade. */
 export async function MasqueradeNavLink({ payload, user }: { payload: import('payload').Payload; user?: unknown }) {
   const opts = masqOptions(payload)
-  if (!user || isMasquerading(payload, await headers()) || !(await opts.canMasquerade({ payload, user: user as MasqUser }))) return null
+  if (!user || isMasquerading(payload, await headers()) || !(await mayMasquerade(opts, { payload, user: user as MasqUser }))) return null
   return (
     <a className="nav__link" href={`${opts.adminRoute}/masquerade`} style={{ display: 'block', marginTop: 'calc(var(--base) / 2)' }}>
       <span className="nav__link-label">Masquerade</span>

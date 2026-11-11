@@ -2,6 +2,7 @@ import { headers } from 'next/headers.js'
 import type { Payload } from 'payload'
 import React from 'react'
 
+import { mayMasquerade } from '../access.js'
 import { ReturnButton } from '../client/ReturnButton.js'
 import { masqOptions, masqStateOf } from '../state.js'
 import type { MasqUser } from '../types.js'
@@ -25,7 +26,7 @@ export async function MasqueradeBanner({ payload, className }: { payload: Payloa
   const masquerader = live
     ? ((await payload.findByID({ collection: opts.collection as never, id: state.by, depth: 0, overrideAccess: true, disableErrors: true })) as MasqUser | null)
     : null
-  const allowed = Boolean(live && masquerader && (await opts.canMasquerade({ payload, user: masquerader, target: viewer! })))
+  const allowed = Boolean(live && masquerader && (await mayMasquerade(opts, { payload, user: masquerader, target: viewer! })))
   if (!allowed)
     return (
       <Bar className={className} stopPath={stopPath}>

@@ -2,6 +2,7 @@ import { headers } from 'next/headers.js'
 import type { Payload, PayloadRequest } from 'payload'
 import React from 'react'
 
+import { mayMasquerade } from '../access.js'
 import { MasqueradeButton } from '../client/MasqueradeButton.js'
 import { isMasquerading, masqOptions } from '../state.js'
 import { currentUser } from './currentUser.js'
@@ -12,7 +13,7 @@ export async function MasqueradeField({ payload, req, id, data }: { payload: Pay
   const user = req?.user as unknown as MasqUser | null
   if (!id || !user || String(user.id) === String(id) || isMasquerading(payload, req.headers)) return null
   const opts = masqOptions(payload)
-  if (!(await opts.canMasquerade({ payload, user, target: { ...(data ?? {}), id } as MasqUser }))) return null
+  if (!(await mayMasquerade(opts, { payload, user, target: { ...(data ?? {}), id } as MasqUser }))) return null
   return (
     <MasqueradeButton
       apiPath={`${opts.apiRoute}/${opts.collection}`}
@@ -29,6 +30,6 @@ export async function MasqueradeCell({ payload, rowData }: { payload: Payload; r
   const id = rowData?.id as string | number | undefined
   if (!id || !user || String(user.id) === String(id) || isMasquerading(payload, await headers())) return null
   const opts = masqOptions(payload)
-  if (!(await opts.canMasquerade({ payload, user, target: rowData as MasqUser }))) return null
+  if (!(await mayMasquerade(opts, { payload, user, target: rowData as MasqUser }))) return null
   return <MasqueradeButton apiPath={`${opts.apiRoute}/${opts.collection}`} userId={String(id)} requireReason={opts.requireReason} label="Masquerade" />
 }

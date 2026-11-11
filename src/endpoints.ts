@@ -1,7 +1,8 @@
 import { addDataAndFileToRequest, APIError, getFieldsToSign, jwtSign, type Endpoint, type PayloadRequest, type Where } from 'payload'
 import { addSessionToUser, parseCookies } from 'payload/shared'
 
-import { BORROWED_CLAIM, cookie, encodeState, isMasquerading, masqOptions, masqStateOf, RETURN_COOKIE, STATE_COOKIE } from './state.js'
+import { BORROWED_CLAIM, borrowedBy, cookie, encodeState, isMasquerading, masqOptions, masqStateOf, RETURN_COOKIE, STATE_COOKIE } from './state.js'
+import { mayMasquerade } from './access.js'
 import type { MasqUser } from './types.js'
 
 const STATE_SECONDS = 24 * 60 * 60
@@ -47,7 +48,7 @@ export const startEndpoint: Endpoint = {
       req,
     })) as MasqUser | null
     if (!target) throw new APIError('User not found.', 404, undefined, true)
-    if (!(await opts.canMasquerade({ payload: req.payload, user, target }))) throw new APIError('You may not masquerade as this user.', 403, undefined, true)
+    if (!(await mayMasquerade(opts, { payload: req.payload, user, target }))) throw new APIError('You may not masquerade as this user.', 403, undefined, true)
 
     const collectionConfig = req.payload.collections[opts.collection as never]!.config
     const { sid } = await addSessionToUser({ collectionConfig, payload: req.payload, req, user: target as never })
@@ -82,9 +83,11 @@ export const stopEndpoint: Endpoint = {
     const stopPath = `${opts.apiRoute}/${opts.collection}/masq/stop`
     const clear = [cookie(req.payload, opts.collection, RETURN_COOKIE, '', -1, stopPath), cookie(req.payload, opts.collection, STATE_COOKIE, '', -1)]
 
-    // End the borrowed session if it is still alive.
+    // End the borrowed session if it is still alive: named by the state cookie, or, if that
+    // cookie is gone, by the borrowed token's own claim.
+    const claimedBy = borrowedBy(req.payload, req.headers)
     const borrowed = req.user as (MasqUser & { _sid?: string; collection?: string }) | null
-    const live = Boolean(state && borrowed?.collection === opts.collection && String(borrowed.id) === state.as)
+    const live = Boolean(borrowed?.collection === opts.collection && (state ? String(borrowed.id) === state.as : claimedBy))
     if (live && borrowed?._sid) {
       const doc = (await req.payload.findByID({ collection: opts.collection as never, id: borrowed.id, depth: 0, overrideAccess: true, showHiddenFields: true, req })) as {
         sessions?: { id: string }[]
@@ -101,8 +104,9 @@ export const stopEndpoint: Endpoint = {
     // Restore only a still-valid token of the same masquerader who may still masquerade.
     const restored = state && own ? await req.payload.auth({ headers: new Headers({ Authorization: `JWT ${own}` }) }).catch(() => null) : null
     const user = (restored?.user ?? null) as MasqUser | null
-    const ok = Boolean(state && user && String(user.id) === state.by && (await opts.canMasquerade({ payload: req.payload, user: user! })))
+    const ok = Boolean(state && user && String(user.id) === state.by && (await mayMasquerade(opts, { payload: req.payload, user: user! })))
     if (state) await opts.onStop?.({ req, masqueraderId: state.by, targetId: state.as, expired: !live, restored: ok })
+    else if (live && claimedBy) await opts.onStop?.({ req, masqueraderId: claimedBy, targetId: String(borrowed!.id), expired: false, restored: false })
     if (!ok) return json({ ok: true, restored: false, redirect: `${opts.adminRoute}/login` }, [...clear, cookie(req.payload, opts.collection, tokenCookie(req), '', -1)])
     const seconds = req.payload.collections[opts.collection as never]!.config.auth.tokenExpiration
     return json({ ok: true, restored: true, redirect: `${opts.adminRoute}/collections/${opts.collection}/${state!.as}` }, [
@@ -124,7 +128,7 @@ export const searchEndpoint: Endpoint = {
   handler: async (req) => {
     const opts = masqOptions(req.payload)
     const user = signedIn(req)
-    if (!(await opts.canMasquerade({ payload: req.payload, user }))) throw new APIError('Not allowed.', 403, undefined, true)
+    if (!(await mayMasquerade(opts, { payload: req.payload, user }))) throw new APIError('Not allowed.', 403, undefined, true)
     const q = String(req.searchParams?.get('q') ?? '').trim().slice(0, 100)
     const page = Math.max(1, Number(req.searchParams?.get('page')) || 1)
     const where: Where = {
@@ -146,7 +150,7 @@ export const searchEndpoint: Endpoint = {
         id: String(d.id),
         label: String(d[opts.labelField] ?? d.email ?? d.id),
         email: d.email ?? null,
-        allowed: await opts.canMasquerade({ payload: req.payload, user, target: d }),
+        allowed: await mayMasquerade(opts, { payload: req.payload, user, target: d }),
       })),
     )
     return json({ docs, page: found.page, totalPages: found.totalPages, totalDocs: found.totalDocs })

@@ -1,7 +1,8 @@
 import { mongooseAdapter } from '@payloadcms/db-mongodb'
 import { GRAPHQL_POST } from '@payloadcms/next/routes'
 import { MongoMemoryReplSet } from 'mongodb-memory-server'
-import { buildConfig, getPayload, handleEndpoints, type Payload, type SanitizedConfig } from 'payload'
+import { buildConfig, getFieldsToSign, getPayload, handleEndpoints, jwtSign, type Payload, type SanitizedConfig } from 'payload'
+import { addSessionToUser } from 'payload/shared'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { masqPlugin, STATE_COOKIE } from '../src/index.js'
@@ -16,6 +17,7 @@ let config: Promise<SanitizedConfig>
 let payload: Payload
 let mongo: MongoMemoryReplSet
 let admin: U
+let admin2: U
 let member: U
 let noteId: string
 
@@ -64,20 +66,23 @@ beforeAll(async () => {
   mongo = await MongoMemoryReplSet.create({ replSet: { count: 1, storageEngine: 'wiredTiger' } })
   config = buildConfig({
     secret: 'rest-test-secret-not-for-production',
+    // Refusals are expected here; keep their error logs out of the test output.
+    logger: { options: { level: 'silent' } },
     telemetry: false,
     typescript: { autoGenerate: false },
     db: mongooseAdapter({ url: mongo.getUri('masq-rest'), ensureIndexes: true }),
     collections: [
-      { slug: 'users', auth: true, access: { read: () => true, update: () => true }, fields: [{ name: 'role', type: 'select', options: ['admin', 'member'], defaultValue: 'member' }, { name: 'name', type: 'text' }] },
-      { slug: 'notes', access: { create: () => true, read: () => true, update: () => true, delete: () => true }, fields: [{ name: 'text', type: 'text' }] },
+      { slug: 'users', auth: true, access: { read: () => true, update: () => true, unlock: () => true }, fields: [{ name: 'role', type: 'select', options: ['admin', 'member'], defaultValue: 'member' }, { name: 'name', type: 'text' }] },
+      { slug: 'notes', versions: true, access: { create: () => true, read: () => true, readVersions: () => true, update: () => true, delete: () => true }, fields: [{ name: 'text', type: 'text' }] },
     ],
-    globals: [{ slug: 'settings', access: { read: () => true, update: () => true }, fields: [{ name: 'motto', type: 'text' }] }],
+    globals: [{ slug: 'settings', versions: true, access: { read: () => true, readVersions: () => true, update: () => true }, fields: [{ name: 'motto', type: 'text' }] }],
     plugins: [masqPlugin({ canMasquerade: ({ user }) => user.role === 'admin' })],
   })
   payload = await getPayload({ config })
   const make = (email: string, role: string, name: string) =>
     payload.create({ collection: 'users', data: { email, password: PW, role, name } as never }) as unknown as Promise<U>
   admin = await make('rest-admin@example.com', 'admin', 'Ada Admin')
+  admin2 = await make('rest-admin2@example.com', 'admin', 'Bea Admin')
   member = await make('rest-member@example.com', 'member', 'Cy Member')
   noteId = String((await payload.create({ collection: 'notes', data: { text: 'original' } })).id)
   await payload.updateGlobal({ slug: 'settings', data: { motto: 'original' } })
@@ -87,6 +92,13 @@ afterAll(async () => {
   await payload?.destroy()
   await mongo?.stop()
 })
+
+/** Ids of the oldest version of the note and of the settings global (both say 'original'). */
+async function originalVersions() {
+  const note = (await payload.findVersions({ collection: 'notes', where: { parent: { equals: noteId } }, sort: 'createdAt', limit: 1 })).docs[0]!
+  const global = (await payload.findGlobalVersions({ slug: 'settings', sort: 'createdAt', limit: 1 })).docs[0]!
+  return { note: String(note.id), global: String(global.id) }
+}
 
 const errorOf = async (res: Response) => ((await res.json()) as { errors?: { message: string }[] }).errors?.[0]?.message
 
@@ -208,5 +220,139 @@ describe('read-only over GraphQL', () => {
   it('lets the same mutation through when nobody is masquerading (control)', async () => {
     const res = await gql('mutation { createNote(data: { text: "gql control" }) { id } }', await signIn(member))
     expect(res.errors).toBeUndefined()
+  })
+})
+
+describe('read-only over REST: every other write', () => {
+  it('refuses restoring collection and global versions, and the restore rolls nothing back', async () => {
+    const versions = await originalVersions()
+    await payload.update({ collection: 'notes', id: noteId, data: { text: 'current' } })
+    await payload.updateGlobal({ slug: 'settings', data: { motto: 'current' } })
+    try {
+      const jar = await masquerade(member)
+      for (const res of [await rest('POST', `/notes/versions/${versions.note}`, jar), await rest('POST', `/globals/settings/versions/${versions.global}`, jar)]) {
+        expect(res.status).toBe(403)
+        expect(await errorOf(res)).toBe(READ_ONLY_MESSAGE)
+      }
+      // Without the state cookie too.
+      const borrowed = { 'payload-token': jar['payload-token']! }
+      expect((await rest('POST', `/globals/settings/versions/${versions.global}`, borrowed)).status).toBe(403)
+      expect((await payload.findByID({ collection: 'notes', id: noteId })).text).toBe('current')
+      expect((await payload.findGlobal({ slug: 'settings' })).motto).toBe('current')
+      // Control: the same restores work for a real session.
+      const own = await signIn(member)
+      expect((await rest('POST', `/notes/versions/${versions.note}`, own)).status).toBe(200)
+      expect((await rest('POST', `/globals/settings/versions/${versions.global}`, own)).status).toBe(200)
+      expect((await payload.findGlobal({ slug: 'settings' })).motto).toBe('original')
+    } finally {
+      await payload.update({ collection: 'notes', id: noteId, data: { text: 'original' } })
+      await payload.updateGlobal({ slug: 'settings', data: { motto: 'original' } })
+    }
+  })
+
+  it('refuses unlock, forgot-password and reset-password', async () => {
+    const jar = await masquerade(member)
+    const { token } = { token: await payload.forgotPassword({ collection: 'users', data: { email: member.email }, disableEmail: true }) }
+    const tries = [
+      rest('POST', '/users/unlock', jar, { email: member.email }),
+      rest('POST', '/users/forgot-password', jar, { email: member.email }),
+      rest('POST', '/users/reset-password', jar, { token, password: 'a-new-password-1' }),
+    ]
+    for (const res of await Promise.all(tries)) {
+      expect(res.status).toBe(403)
+      expect(await errorOf(res)).toBe(READ_ONLY_MESSAGE)
+    }
+    // The password is unchanged; control: the same reset works without a masquerade.
+    expect((await rest('POST', '/users/login', {}, { email: member.email, password: PW })).status).toBe(200)
+    expect((await rest('POST', '/users/unlock', await signIn(member), { email: member.email })).status).toBe(200)
+  })
+
+  it('stays read-only when the borrowed token comes in an Authorization header', async () => {
+    const jar = await masquerade(member)
+    for (const scheme of ['JWT', 'Bearer']) {
+      const request = new Request('http://localhost:3000/api/notes', {
+        method: 'POST',
+        headers: { Authorization: `${scheme} ${jar['payload-token']}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: 'by header' }),
+      })
+      const res = await handleEndpoints({ config, request })
+      expect(res.status).toBe(403)
+      expect(await errorOf(res)).toBe(READ_ONLY_MESSAGE)
+    }
+    expect((await payload.count({ collection: 'notes', where: { text: { equals: 'by header' } } })).totalDocs).toBe(0)
+  })
+
+  it('refuses nesting from a borrowed session even without the state cookie', async () => {
+    const jar = await masquerade(admin2)
+    const res = await rest('POST', `/users/${member.id}/masq`, { 'payload-token': jar['payload-token']! }, {})
+    expect(res.status).toBe(400)
+    expect(await errorOf(res)).toBe('Stop masquerading first.')
+  })
+
+  it('stop ends the borrowed session even without the state cookie, and restores nothing', async () => {
+    const own = await signIn(admin)
+    const started = jarOf(await rest('POST', `/users/${member.id}/masq`, own, {}))
+    const borrowed = started['payload-token']!
+    const back = await rest('POST', '/users/masq/stop', { 'payload-token': borrowed, 'payload-masq-return': started['payload-masq-return']! })
+    expect(await back.json()).toMatchObject({ restored: false })
+    expect(jarOf(back)['payload-token']).toBe('')
+    expect((await payload.auth({ headers: new Headers({ Authorization: `JWT ${borrowed}` }) })).user).toBeNull()
+  })
+
+  it('the documented upgrade step ends a borrowed session issued before the claim existed', async () => {
+    // What 0.1.0 issued: a real session of the target, with no masqBy claim.
+    const collectionConfig = payload.collections.users!.config
+    const target = (await payload.findByID({ collection: 'users', id: member.id, showHiddenFields: true })) as never
+    const { sid } = await addSessionToUser({ collectionConfig, payload, user: target } as never)
+    const { token } = await jwtSign({ fieldsToSign: getFieldsToSign({ collectionConfig, email: member.email, sid, user: target }), secret: payload.secret, tokenExpiration: 3600 })
+    expect((await payload.auth({ headers: new Headers({ Authorization: `JWT ${token}` }) })).user?.id).toBe(member.id)
+    // README "Upgrading": clear every user's sessions.
+    await payload.db.updateMany({ collection: 'users', where: {}, data: { sessions: [] } })
+    expect((await payload.auth({ headers: new Headers({ Authorization: `JWT ${token}` }) })).user).toBeNull()
+  })
+})
+
+describe('canMasquerade must answer exactly true', () => {
+  const masq = () => payload.config.custom!.masq as { canMasquerade: unknown }
+  async function withRule<T>(rule: unknown, fn: () => Promise<T>) {
+    const before = masq().canMasquerade
+    masq().canMasquerade = rule
+    try {
+      return await fn()
+    } finally {
+      masq().canMasquerade = before
+    }
+  }
+  const truthy = () => 'yes'
+  const throws = () => {
+    throw new Error('rule failed')
+  }
+
+  it('refuses to start on a truthy answer that is not true, or a throw (403, never 500)', async () => {
+    for (const rule of [truthy, async () => 1, throws, async () => Promise.reject(new Error('rule failed'))]) {
+      const res = await withRule(rule, async () => rest('POST', `/users/${member.id}/masq`, await signIn(admin), {}))
+      expect(res.status).toBe(403)
+      expect(jarOf(res)['payload-token']).toBeUndefined()
+    }
+  })
+
+  it('refuses the search and the restore on the same answers', async () => {
+    for (const rule of [truthy, throws]) {
+      expect((await withRule(rule, async () => rest('GET', '/users/masq/search?q=Cy', await signIn(admin)))).status).toBe(403)
+    }
+    const own = await signIn(admin)
+    const started = jarOf(await rest('POST', `/users/${member.id}/masq`, own, {}))
+    for (const rule of [truthy, throws]) {
+      const back = await withRule(rule, () => rest('POST', '/users/masq/stop', started))
+      expect(back.status).toBe(200)
+      expect(await back.json()).toMatchObject({ restored: false })
+    }
+  })
+
+  it('marks search results allowed only on exactly true', async () => {
+    const rule = ({ target }: { target?: { id: string } }) => (target ? (target.id === member.id ? 'yes' : true) : true)
+    const body = (await withRule(rule, async () => (await rest('GET', '/users/masq/search', await signIn(admin))).json())) as { docs: { id: string; allowed: boolean }[] }
+    expect(body.docs.find((d) => d.id === member.id)?.allowed).toBe(false)
+    expect(body.docs.find((d) => d.id === admin2.id)?.allowed).toBe(true)
   })
 })

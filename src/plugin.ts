@@ -1,4 +1,4 @@
-import { APIError, type CollectionBeforeOperationHook, type Config, type GlobalBeforeChangeHook, type Plugin } from 'payload'
+import { APIError, type CollectionBeforeOperationHook, type Config, type GlobalBeforeChangeHook, type GlobalBeforeOperationHook, type Plugin } from 'payload'
 
 import { searchEndpoint, startEndpoint, stopEndpoint } from './endpoints.js'
 import { borrowedBy, isMasquerading } from './state.js'
@@ -9,11 +9,25 @@ const BOOKKEEPING = new Set(['payload-preferences', 'payload-locked-documents'])
 
 export const READ_ONLY_MESSAGE = 'Masquerade is read-only: nothing can be created, changed or deleted while masquerading.'
 
+/**
+ * Every collection operation in Payload 3.92 that writes and runs `beforeOperation`. Login
+ * (it only records the sign-in) and refresh (refused separately) are left out.
+ */
+const COLLECTION_WRITES = new Set(['create', 'update', 'delete', 'restoreVersion', 'unlock', 'forgotPassword', 'resetPassword'])
+
+/** Global operations that write. A global restore skips `beforeChange`, so the guard sits here. */
+const GLOBAL_WRITES = new Set(['update', 'restoreVersion'])
+
 /** Read-only masquerade: refuse writes while masquerading (the plugin's own writes are marked internal). */
 const readOnlyGuard: CollectionBeforeOperationHook = ({ args, operation, req }) => {
   if (req.context?.masqInternal) return args
-  if ((operation === 'create' || operation === 'update' || operation === 'delete') && isMasquerading(req.payload, req.headers))
-    throw new APIError(READ_ONLY_MESSAGE, 403, undefined, true)
+  if (COLLECTION_WRITES.has(operation) && isMasquerading(req.payload, req.headers)) throw new APIError(READ_ONLY_MESSAGE, 403, undefined, true)
+  return args
+}
+
+const globalReadOnlyGuard: GlobalBeforeOperationHook = ({ args, operation, req }) => {
+  if (req.context?.masqInternal) return args
+  if (GLOBAL_WRITES.has(operation) && isMasquerading(req.payload, req.headers)) throw new APIError(READ_ONLY_MESSAGE, 403, undefined, true)
   return args
 }
 
@@ -70,6 +84,7 @@ export const masqPlugin =
           ...g,
           hooks: {
             ...g.hooks,
+            beforeOperation: [...(g.hooks?.beforeOperation ?? []), globalReadOnlyGuard],
             beforeChange: [
               ...(g.hooks?.beforeChange ?? []),
               (({ data, req }) => {

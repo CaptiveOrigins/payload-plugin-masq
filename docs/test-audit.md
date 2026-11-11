@@ -2,6 +2,26 @@
 
 Kept by this repo's owning session, per `~/Code/CLAUDE.md`, "Test self-audits". Newest first.
 
+## 2026-11-11 (later): security review of 6ba0366
+
+The security review didn't approve 6ba0366. Each item below has a REST test (`handleEndpoints`) written first. Suite: 37 → 47.
+
+| Promise | Test |
+| --- | --- |
+| Restoring a collection or global version is refused while masquerading (a global restore skips `beforeChange`, so globals now have a `beforeOperation` guard); the same restores work without a masquerade | `read-only over REST: every other write > refuses restoring collection and global versions…` |
+| Unlock, forgot-password and reset-password are refused; the password is unchanged; unlock works without a masquerade | `…refuses unlock, forgot-password and reset-password` |
+| Read-only holds for a borrowed token sent as `Authorization: JWT` or `Bearer` | `…Authorization header` |
+| No nesting from a borrowed session without the state cookie | `…refuses nesting…` |
+| Return ends the borrowed session with the state cookie gone, and restores nothing | `…stop ends the borrowed session…` |
+| The README's upgrade step ends a 0.1.0-style borrowed session (no claim) | `…the documented upgrade step…` |
+| `canMasquerade` must answer exactly `true`: a truthy value or a throw refuses start, search and restore (403, never 500), marks search results not allowed, and makes the components render nothing | `canMasquerade must answer exactly true > …` (3), `Server Components need an exact true` |
+
+Payload 3.92's write operations that run `beforeOperation` were read from `node_modules/payload/dist`: collections `create`, `update`, `delete`, `restoreVersion`, `unlock`, `forgotPassword`, `resetPassword`; globals `update`, `restoreVersion`. All are refused now. Left allowed on purpose: `login` (it only records the sign-in, and blocking it could lock a masquerader out while a stale cookie lingers) and `refresh` (refused separately for borrowed tokens). Not reachable by any hook: `verifyEmail` (needs the emailed token) and `logout`.
+
+Mutation checks (each fix reverted by a string replace, full suite run, file restored byte for byte), as failing tests: restoreVersion allowed 1; unlock allowed 1; resetPassword allowed 1; no global `beforeOperation` guard 1; stop ignoring the claim 1; `Authorization` header ignored 1; nesting check on the state cookie only 1; `exactlyTrue` accepting truthy values 4; `exactlyTrue` letting throws through 3; start check bypassing the helper 1. forgotPassword allowed survived the REST suite, because Payload's forgot-password also runs an internal `update` that the guard refuses; a hook-level test in `test/config.test.ts` now kills it (1).
+
+0.1.0 borrowed tokens can't be told apart from normal sessions on the server, so the README and CHANGELOG now carry a required upgrade step: clear the sessions of the users who were masqueraded as (the borrowed session lives on the target, not the masquerader). The Local API command is tested; the `mongosh` equivalent is not.
+
 ## 2026-11-11: Server Components and real HTTP requests
 
 Closes the two gaps the first audit left for the lead. Suite before: 19 tests. After: 37 (`test/rsc.test.tsx` 10, `test/rest.test.ts` 8).

@@ -14,6 +14,11 @@ describe('options', () => {
     const state = encodeState(secret, { by: 'a', as: 'b', at: new Date().toISOString(), until: new Date().toISOString() })
     const req = (cookie: string, context = {}) => ({ payload: { secret }, headers: new Headers({ cookie }), context }) as never
     expect(() => hook({ args: {}, operation: 'update', req: req(`payload-masq=${state}`) } as never)).toThrow(/read-only/)
+    // Every write Payload 3.92 runs beforeOperation for. forgotPassword is also caught later by
+    // its own internal update; refusing it here stops it before it does any work.
+    for (const operation of ['create', 'delete', 'restoreVersion', 'unlock', 'forgotPassword', 'resetPassword'])
+      expect(() => hook({ args: {}, operation, req: req(`payload-masq=${state}`) } as never)).toThrow(/read-only/)
+    for (const operation of ['read', 'login', 'count', 'findVersions']) expect(hook({ args: { ok: 1 }, operation, req: req(`payload-masq=${state}`) } as never)).toEqual({ ok: 1 })
     expect(hook({ args: { ok: 1 }, operation: 'read', req: req(`payload-masq=${state}`) } as never)).toEqual({ ok: 1 })
     expect(hook({ args: { ok: 1 }, operation: 'update', req: req('') } as never)).toEqual({ ok: 1 })
     expect(hook({ args: { ok: 1 }, operation: 'update', req: req(`payload-masq=${state}`, { masqInternal: true }) } as never)).toEqual({ ok: 1 })

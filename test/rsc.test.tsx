@@ -220,6 +220,19 @@ describe('Server Components refuse', () => {
   })
 })
 
+describe('Server Components need an exact true', () => {
+  it('a truthy answer that is not true, or a throw, renders nothing instead of an error', async () => {
+    for (const rule of [() => 'yes', () => { throw new Error('rule failed') }]) {
+      const own = await signIn(admin)
+      const jar = await masquerade(member)
+      opts().canMasquerade = rule as never
+      expectRefused(await render(own))
+      expectRefused(await render(jar), { banner: 'You may no longer masquerade as this user.' })
+      opts().canMasquerade = allowAdmins as never
+    }
+  })
+})
+
 describe('Server Components render for an allowed admin', () => {
   it('the account-page button, list cell, nav link and search view, but no banner', async () => {
     const out = await render(await signIn(admin))
