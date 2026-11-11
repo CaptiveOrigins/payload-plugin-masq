@@ -30,6 +30,16 @@ Built for support and troubleshooting.
 - Never as yourself, no nesting, no public endpoints: masquerading needs a signed-in user the
   rules allow.
 
+## On its own, and with others
+
+**On its own:** it needs an auth collection (default `users`) and your `canMasquerade`. It works with no other Captive Origins plugin. Auditing is up to your `onStart` and `onStop`.
+
+**Works with:**
+- **Audit Trail:** call Audit Trail's `recordEvent` from `onStart` and `onStop` (with `masquerade` in its `actions`), and use `masqueraderOf(req)` in its `via` so a change made while masquerading says who really made it.
+- **Hats:** as Hats' design describes, Hats' `blocked(req)` refuses switching while masquerading, and your `canMasquerade` refuses a switched session (`hatsStateOf(user).via`).
+
+**Family:** It's part of the **Identity** family (a working draft): plugins designed to sit together for accounts and access.
+
 ## Install
 
 ```bash
