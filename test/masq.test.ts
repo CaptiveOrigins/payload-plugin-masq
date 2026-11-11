@@ -146,3 +146,87 @@ describe('masquerade', () => {
     expect(all.docs.map((d) => d.id)).not.toContain(admin.id)
   })
 })
+
+describe('masquerade refusals (fail closed)', () => {
+  const opts = () => payload.config.custom!.masq as { canMasquerade: (a: { user: U; target?: U }) => boolean; requireReason: boolean }
+  /** Runs `fn` with a temporary change to the resolved options, then puts them back. */
+  async function withOpts<T>(patch: Record<string, unknown>, fn: () => Promise<T>) {
+    const before = { ...opts() }
+    Object.assign(opts(), patch)
+    try {
+      return await fn()
+    } finally {
+      Object.assign(opts(), before)
+    }
+  }
+
+  it('refuses to start when signed out, for a missing user, or without a browser sign-in', async () => {
+    expect((await call('/:id/masq', {}, { id: member.id })).status).toBe(401)
+    expect((await call('/:id/masq', { 'payload-token': await login(admin) }, { id: '000000000000000000000000' })).status).toBe(404)
+    // Signed in, but not through the browser cookie: there is nothing to return to.
+    const { user } = await payload.auth({ headers: new Headers({ Authorization: `JWT ${await login(admin)}` }) })
+    const req = (await createLocalReq({ user: user as never }, payload)) as PayloadRequest
+    ;(req as { headers: Headers }).headers = new Headers()
+    req.routeParams = { id: member.id }
+    req.data = {} as never
+    await expect(endpoint('/:id/masq').handler(req)).rejects.toThrow(/browser sign-in/)
+  })
+
+  it('asks canMasquerade about the target, and needs a reason when required', async () => {
+    const own = await login(admin)
+    const noMembers = await withOpts({ canMasquerade: ({ target }: { target?: U }) => target?.role !== 'member' }, () => call('/:id/masq', { 'payload-token': own }, { id: member.id }))
+    expect(noMembers.status).toBe(403)
+    const noReason = await withOpts({ requireReason: true }, () => call('/:id/masq', { 'payload-token': own }, { id: member.id, body: { reason: '   ' } }))
+    expect(noReason.status).toBe(400)
+  })
+
+  it('scopes the cookies: httpOnly, and the return token only to the stop endpoint', async () => {
+    const res = await call('/:id/masq', { 'payload-token': await login(admin) }, { id: member.id })
+    const set = res.headers.getSetCookie()
+    expect(set).toHaveLength(3)
+    for (const c of set) expect(c).toMatch(/HttpOnly/i)
+    expect(set.find((c) => c.startsWith('payload-masq-return='))).toMatch(/Path=\/api\/users\/masq\/stop/)
+  })
+
+  it('does not restore a masquerader who lost permission, and signs them out', async () => {
+    const c = jar(await call('/:id/masq', { 'payload-token': await login(admin) }, { id: member.id }))
+    const back = await withOpts({ canMasquerade: () => false }, () =>
+      call('/masq/stop', { 'payload-token': c['payload-token']!, [STATE_COOKIE]: c[STATE_COOKIE]!, 'payload-masq-return': c['payload-masq-return']! }),
+    )
+    expect(await back.json()).toMatchObject({ restored: false, redirect: '/admin/login' })
+    expect(jar(back)['payload-token']).toBe('')
+    expect(stopped.at(-1)).toMatchObject({ masqueraderId: admin.id, restored: false })
+  })
+
+  it('does not restore a valid token that belongs to someone other than the masquerader', async () => {
+    const c = jar(await call('/:id/masq', { 'payload-token': await login(admin) }, { id: member.id }))
+    const back = await call('/masq/stop', { 'payload-token': c['payload-token']!, [STATE_COOKIE]: c[STATE_COOKIE]!, 'payload-masq-return': await login(admin2) })
+    expect(await back.json()).toMatchObject({ restored: false })
+    expect(jar(back)['payload-token']).toBe('')
+  })
+
+  it('reports an expired borrowed session on return', async () => {
+    const own = await login(admin)
+    const c = jar(await call('/:id/masq', { 'payload-token': own }, { id: member.id }))
+    const back = await call('/masq/stop', { [STATE_COOKIE]: c[STATE_COOKIE]!, 'payload-masq-return': c['payload-masq-return']! })
+    expect(await back.json()).toMatchObject({ restored: true })
+    expect(stopped.at(-1)).toMatchObject({ expired: true, restored: true })
+  })
+
+  it('search lists only users the masquerader can read, and marks targets they may not use', async () => {
+    const users = payload.collections.users!.config
+    const read = users.access.read
+    users.access.read = (() => ({ role: { equals: 'admin' } })) as never
+    try {
+      const hidden = (await (await call('/masq/search', { 'payload-token': await login(admin) }, { query: 'q=Cy' })).json()) as { docs: unknown[] }
+      expect(hidden.docs).toEqual([])
+    } finally {
+      users.access.read = read
+    }
+    const body = await withOpts({ canMasquerade: ({ user, target }: { user: U; target?: U }) => user.role === 'admin' && target?.role !== 'admin' }, async () =>
+      (await (await call('/masq/search', { 'payload-token': await login(admin) })).json()) as { docs: { id: string; allowed: boolean }[] },
+    )
+    expect(body.docs.find((d) => d.id === admin2.id)?.allowed).toBe(false)
+    expect(body.docs.find((d) => d.id === member.id)?.allowed).toBe(true)
+  })
+})
