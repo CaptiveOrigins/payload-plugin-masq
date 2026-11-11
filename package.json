@@ -1,6 +1,6 @@
 {
   "name": "@captiveorigins/payload-plugin-masq",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Masquerade for Payload: admins sign in as another user, read-only, to see what they see, with a banner, a one-hour session, an admin-only user search and audit hooks.",
   "homepage": "https://github.com/CaptiveOrigins/payload-plugin-masq#readme",
   "bugs": {
