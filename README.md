@@ -15,17 +15,20 @@ Built for support and troubleshooting.
   masquerade see it, and the search reads with their own access, so it never lists anyone
   they could not already see. The users list gets a Masquerade column with a button per row.
 - **A banner** in the admin (and on your site, with `<MasqueradeBanner />`): who you are
-  masquerading as, the time left, and **Return to my account**.
+  masquerading as, the time left, and **Return to my account**. Once the borrowed session is
+  over, or you're no longer allowed to masquerade as that user, it names nobody and only offers
+  the way back.
 - **A real, short session**: the masquerader gets a genuine Payload session of the target
   (the same mechanism as a normal login, sessions included), so every access rule applies
-  exactly as for that user. One hour by default.
+  exactly as for that user. One hour by default, and it can't be refreshed past that.
 - **Safe return**: your own token waits in an httpOnly cookie sent only to the stop endpoint,
   and comes back only if it is still valid and you are still allowed to masquerade. The
   borrowed session is ended when you return.
 - **Audit hooks**: `onStart` (with an optional reason) and `onStop`, and `masqueraderOf(req)`
   so your audit trail can record who really made a change.
 - **Read-only** (default): look everywhere the user can, but nothing can be created, changed
-  or deleted while masquerading. Payload's own bookkeeping (preferences, document locks) keeps
+  or deleted while masquerading, over REST, GraphQL or the Local API with the request. The
+  borrowed token itself is marked, so clearing the masquerade cookie doesn't lift it. Payload's own bookkeeping (preferences, document locks) keeps
   working. Writes in your own server actions: call `assertNotMasquerading(payload, headers)`.
 - Never as yourself, no nesting, no public endpoints: masquerading needs a signed-in user the
   rules allow.

@@ -1,7 +1,7 @@
 import { APIError, type CollectionBeforeOperationHook, type Config, type GlobalBeforeChangeHook, type Plugin } from 'payload'
 
 import { searchEndpoint, startEndpoint, stopEndpoint } from './endpoints.js'
-import { masqStateOf } from './state.js'
+import { borrowedBy, isMasquerading } from './state.js'
 import type { MasqPluginOptions, ResolvedMasqOptions } from './types.js'
 
 /** Payload's own bookkeeping, written while simply looking around the admin. */
@@ -12,8 +12,14 @@ export const READ_ONLY_MESSAGE = 'Masquerade is read-only: nothing can be create
 /** Read-only masquerade: refuse writes while masquerading (the plugin's own writes are marked internal). */
 const readOnlyGuard: CollectionBeforeOperationHook = ({ args, operation, req }) => {
   if (req.context?.masqInternal) return args
-  if ((operation === 'create' || operation === 'update' || operation === 'delete') && masqStateOf(req.payload, req.headers))
+  if ((operation === 'create' || operation === 'update' || operation === 'delete') && isMasquerading(req.payload, req.headers))
     throw new APIError(READ_ONLY_MESSAGE, 403, undefined, true)
+  return args
+}
+
+/** A borrowed session ends on time: it can't be refreshed (the admin refreshes tokens while you're active). */
+const noBorrowedRefresh: CollectionBeforeOperationHook = ({ args, operation, req }) => {
+  if (operation === 'refresh' && borrowedBy(req.payload, req.headers)) throw new APIError('A masquerade session can’t be extended.', 403, undefined, true)
   return args
 }
 
@@ -67,7 +73,7 @@ export const masqPlugin =
             beforeChange: [
               ...(g.hooks?.beforeChange ?? []),
               (({ data, req }) => {
-                if (!req.context?.masqInternal && masqStateOf(req.payload, req.headers)) throw new APIError(READ_ONLY_MESSAGE, 403, undefined, true)
+                if (!req.context?.masqInternal && isMasquerading(req.payload, req.headers)) throw new APIError(READ_ONLY_MESSAGE, 403, undefined, true)
                 return data
               }) as GlobalBeforeChangeHook,
             ],
@@ -97,7 +103,7 @@ export const masqPlugin =
         const columns = c.admin?.defaultColumns
         return {
           ...c,
-          hooks,
+          hooks: { ...hooks, beforeOperation: [...(hooks?.beforeOperation ?? []), noBorrowedRefresh] },
           admin: resolved.listColumn && columns ? { ...c.admin, defaultColumns: [...columns, 'masq'] } : c.admin,
           endpoints: [stopEndpoint, searchEndpoint, startEndpoint, ...(c.endpoints || [])],
           fields: [

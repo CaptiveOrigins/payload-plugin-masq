@@ -2,6 +2,41 @@
 
 Kept by this repo's owning session, per `~/Code/CLAUDE.md`, "Test self-audits". Newest first.
 
+## 2026-11-11: Server Components and real HTTP requests
+
+Closes the two gaps the first audit left for the lead. Suite before: 19 tests. After: 37 (`test/rsc.test.tsx` 10, `test/rest.test.ts` 8).
+
+| Promise | Test |
+| --- | --- |
+| The banner, account-page button, list cell, nav link and Masquerade view refuse signed-out people, people who may not masquerade, an admin whose permission was removed, and a tampered state cookie, and show no one's name or email when they refuse | `Server Components refuse > …` (7) |
+| The banner names the target only while the borrowed session is live and the masquerader may still masquerade as them; otherwise it names nobody and offers the way back | `Server Components refuse > signed-out people holding a leftover state cookie…`, `…permission was removed mid-session…`, `…borrowed session is over, or that someone else is signed in under` |
+| An allowed admin gets the button, cell, nav link and search view; no button on their own account; while masquerading a banner naming the target and no way to nest | `Server Components render for an allowed admin > …` (3) |
+| Read-only everywhere Payload runs: REST creates, updates, bulk updates, deletes, bulk deletes and global writes refused; reads work; the same requests write when nobody is masquerading | `read-only over REST > …` |
+| Same over GraphQL (`@payloadcms/next/routes` `GRAPHQL_POST`, from the dev dependencies): mutations on collections and globals refused, queries answered | `read-only over GraphQL > …` |
+| Read-only holds when the browser drops the state cookie | `read-only over REST > stays read-only when the browser drops the state cookie…`, GraphQL test |
+| A borrowed session can't be refreshed past its hour; a normal one still refreshes | `read-only over REST > does not let the borrowed session be refreshed past its hour` |
+| Return over REST restores the own token, clears the state, and writes work again | `read-only over REST > returns over REST…` |
+
+The harness mocks `next/headers` (the request's cookies), `next/navigation`, the admin's `DefaultTemplate` (a pass-through) and `@payloadcms/ui`'s `Button`. Payload, its auth and MongoDB (in memory) are real; REST goes through `handleEndpoints`, GraphQL through Payload's own route handler. Components are awaited like RSC and rendered with `react-dom/server`. Not seen in a real browser or a real Next.js server.
+
+### Bugs found and fixed
+
+1. **Read-only and the one-hour limit depended on a cookie the browser controls.** Dropping the `payload-masq` cookie (devtools) left a working borrowed session of the target that could create, change and delete as them, with no `masqueraderOf` record. The borrowed session could also be refreshed (`/refresh-token`, which the admin calls while you're active), past its hour. Fix: the borrowed token carries a `masqBy` claim; read-only, the global guard, `assertNotMasquerading`, the start endpoint's no-nesting check and the components treat that claim as masquerading too, and a `beforeOperation` hook on the masquerade collection refuses `refresh` for a borrowed token.
+2. **The banner named the target to people it shouldn't.** With only a valid state cookie it showed the target's name and email to anyone at that browser: signed out after the borrowed session ended, signed in as someone else, or a masquerader who had lost permission. Fix: it names the target only when the signed-in user is the target and the masquerader may still masquerade as them; otherwise it says the masquerade has ended (or is no longer allowed), names nobody, and keeps **Return to my account**.
+3. Smaller: the list cell, nav link and Masquerade view showed masquerade controls while masquerading as another admin, though starting would be refused (no nesting). They now hide, as the account-page button already did; the view says to return first.
+
+Mutation checks (each fix reverted by a string replace, full suite run, file restored byte for byte): banner ignoring lost permission, 1 failure; banner trusting any signed-in viewer, 1; read-only keyed on the state cookie only, 3; refresh allowed, 1; borrowed token unmarked, 4; account-page button shown while masquerading, 2. The 0.1.0 banner fails 3 of the new component tests; the 0.1.0 read-only fails the dropped-cookie and refresh tests.
+
+### Gaps skipped (and why)
+
+- Rendering inside a real Next.js server or browser: the harness covers the components' own checks; the rest is Next and Payload's rendering.
+- The client components' clicks (`fetch` calls to the endpoints): the endpoints themselves are tested over REST.
+
+### Known limits (not bugs, recorded)
+
+- Removing someone's permission doesn't end a borrowed session already running; it ends at its hour, or at return, which then signs them out. The banner stops naming the target straight away.
+- Borrowed tokens issued before this fix carry no claim, so for them read-only still rests on the state cookie and refresh isn't refused. Masquerades started after the upgrade are covered; ending running ones at the upgrade clears this.
+
 ## 2026-11-10: first audit
 
 Suite before: 9 tests. After: 19. Sources: the README, the option docs in `src/types.ts` and the comments in `src/plugin.ts` and `src/endpoints.ts`. There is no `docs/decisions.md`.

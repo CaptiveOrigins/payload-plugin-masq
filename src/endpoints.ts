@@ -1,7 +1,7 @@
 import { addDataAndFileToRequest, APIError, getFieldsToSign, jwtSign, type Endpoint, type PayloadRequest, type Where } from 'payload'
 import { addSessionToUser, parseCookies } from 'payload/shared'
 
-import { cookie, encodeState, masqOptions, masqStateOf, RETURN_COOKIE, STATE_COOKIE } from './state.js'
+import { BORROWED_CLAIM, cookie, encodeState, isMasquerading, masqOptions, masqStateOf, RETURN_COOKIE, STATE_COOKIE } from './state.js'
 import type { MasqUser } from './types.js'
 
 const STATE_SECONDS = 24 * 60 * 60
@@ -28,7 +28,7 @@ export const startEndpoint: Endpoint = {
   handler: async (req) => {
     const opts = masqOptions(req.payload)
     const user = signedIn(req)
-    if (masqStateOf(req.payload, req.headers)) throw new APIError('Stop masquerading first.', 400, undefined, true)
+    if (isMasquerading(req.payload, req.headers)) throw new APIError('Stop masquerading first.', 400, undefined, true)
     const own = parseCookies(req.headers).get(tokenCookie(req))
     if (!own) throw new APIError('Masquerade needs a browser sign-in.', 400, undefined, true)
     const id = String(req.routeParams?.id ?? '')
@@ -52,7 +52,8 @@ export const startEndpoint: Endpoint = {
     const collectionConfig = req.payload.collections[opts.collection as never]!.config
     const { sid } = await addSessionToUser({ collectionConfig, payload: req.payload, req, user: target as never })
     const { token } = await jwtSign({
-      fieldsToSign: getFieldsToSign({ collectionConfig, email: String(target.email ?? ''), sid, user: target as never }),
+      // Marked as borrowed, so it stays read-only and can't be refreshed even without the state cookie.
+      fieldsToSign: { ...getFieldsToSign({ collectionConfig, email: String(target.email ?? ''), sid, user: target as never }), [BORROWED_CLAIM]: String(user.id) },
       secret: req.payload.secret,
       tokenExpiration: opts.duration,
     })
