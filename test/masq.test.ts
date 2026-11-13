@@ -80,7 +80,7 @@ describe('masquerade', () => {
     const paths = (payload.collections.users!.config.endpoints as Endpoint[]).map((e) => e.path)
     expect(paths).toEqual(expect.arrayContaining(['/:id/masq', '/masq/stop', '/masq/search']))
     expect(payload.config.admin.components.views?.masquerade).toMatchObject({ path: '/masquerade' })
-    expect(payload.config.admin.components.header).toContain('@captiveorigins/payload-plugin-masq/rsc#AdminMasqueradeBanner')
+    expect(payload.config.admin.components.header).toContain('@extantape/payload-plugin-masq/rsc#AdminMasqueradeBanner')
     expect(payload.collections.users!.config.fields.some((f) => 'name' in f && f.name === 'masq')).toBe(true)
     expect(payload.collections.users!.config.admin.defaultColumns).toEqual(['email', 'masq'])
   })

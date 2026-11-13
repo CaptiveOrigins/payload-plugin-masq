@@ -103,11 +103,11 @@ export const masqPlugin =
         ...config.admin,
         components: {
           ...components,
-          header: [...(components.header ?? []), ...(resolved.adminBanner ? ['@captiveorigins/payload-plugin-masq/rsc#AdminMasqueradeBanner'] : [])],
-          afterNavLinks: [...(components.afterNavLinks ?? []), ...(resolved.adminView ? ['@captiveorigins/payload-plugin-masq/rsc#MasqueradeNavLink'] : [])],
+          header: [...(components.header ?? []), ...(resolved.adminBanner ? ['@extantape/payload-plugin-masq/rsc#AdminMasqueradeBanner'] : [])],
+          afterNavLinks: [...(components.afterNavLinks ?? []), ...(resolved.adminView ? ['@extantape/payload-plugin-masq/rsc#MasqueradeNavLink'] : [])],
           views: {
             ...components.views,
-            ...(resolved.adminView ? { masquerade: { Component: '@captiveorigins/payload-plugin-masq/rsc#MasqueradeView', path: '/masquerade' } } : {}),
+            ...(resolved.adminView ? { masquerade: { Component: '@extantape/payload-plugin-masq/rsc#MasqueradeView', path: '/masquerade' } } : {}),
           },
         },
       },
@@ -128,7 +128,7 @@ export const masqPlugin =
               label: 'Masquerade',
               admin: {
                 position: 'sidebar',
-                components: { Field: '@captiveorigins/payload-plugin-masq/rsc#MasqueradeField', Cell: '@captiveorigins/payload-plugin-masq/rsc#MasqueradeCell' },
+                components: { Field: '@extantape/payload-plugin-masq/rsc#MasqueradeField', Cell: '@extantape/payload-plugin-masq/rsc#MasqueradeCell' },
               },
             },
             ...c.fields,

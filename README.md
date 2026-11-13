@@ -85,11 +85,11 @@ If your auth collection sets `useSessions: false`, there are no sessions to clea
 ## Install
 
 ```bash
-npm install @captiveorigins/payload-plugin-masq
+npm install @extantape/payload-plugin-masq
 ```
 
 ```ts
-import { masqPlugin } from '@captiveorigins/payload-plugin-masq'
+import { masqPlugin } from '@extantape/payload-plugin-masq'
 
 export default buildConfig({
   plugins: [
@@ -115,7 +115,7 @@ Then run `payload generate:importmap`. Add the banner to your site layout (a Ser
 Component) so masqueraders see it outside the admin too:
 
 ```tsx
-import { MasqueradeBanner } from '@captiveorigins/payload-plugin-masq/rsc'
+import { MasqueradeBanner } from '@extantape/payload-plugin-masq/rsc'
 
 <MasqueradeBanner payload={payload} />
 ```
