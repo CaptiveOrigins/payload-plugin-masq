@@ -4,7 +4,7 @@ Masquerade for [Payload](https://payloadcms.com) 3: an admin signs in as another
 the site and admin exactly as they do, then returns to their own account with one click.
 Built for support and troubleshooting.
 
-> **Beta (0.x).** Used in production by Captive Origins. Feedback and issues welcome.
+> **Beta (0.x).** Used in production on a live site. Feedback and issues welcome.
 
 ## What you get
 
@@ -74,7 +74,7 @@ If your auth collection sets `useSessions: false`, there are no sessions to clea
 
 ## On its own, and with others
 
-**On its own:** it needs an auth collection (default `users`) and your `canMasquerade`. It works with no other Captive Origins plugin. Auditing is up to your `onStart` and `onStop`.
+**On its own:** it needs an auth collection (default `users`) and your `canMasquerade`. It doesn't need any other plugin. Auditing is up to your `onStart` and `onStop`.
 
 **Works with:**
 - **Audit Trail:** call Audit Trail's `recordEvent` from `onStart` and `onStop` (with `masquerade` in its `actions`), and use `masqueraderOf(req)` in its `via` so a change made while masquerading says who really made it.
