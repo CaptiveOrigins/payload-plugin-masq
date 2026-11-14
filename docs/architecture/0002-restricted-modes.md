@@ -1,6 +1,6 @@
 # 0002: Restricted modes
 
-Status: **design agreed, not built** (2026-11-11). Task K506. It builds after the current plugin work is done.
+Status: **design agreed, not built** (2026-11-11). It builds after the current plugin work is done.
 
 ## Context
 
